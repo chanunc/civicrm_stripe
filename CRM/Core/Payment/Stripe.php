@@ -14,7 +14,7 @@ class CRM_Core_Payment_Stripe extends CRM_Core_Payment {
   static private $_singleton = null;
 
   /**
-   * Mode of operation: live or test.
+   * mode of operation: live or test
    *
    * @var object
    * @static
@@ -24,43 +24,37 @@ class CRM_Core_Payment_Stripe extends CRM_Core_Payment {
   /**
    * Constructor
    *
-   * @param string $mode
-   *   The mode of operation: live or test.
+   * @param string $mode the mode of operation: live or test
    *
    * @return void
    */
   function __construct($mode, &$paymentProcessor) {
-    self::$_mode             = $mode;
+    $this->_mode             = $mode;
     $this->_paymentProcessor = $paymentProcessor;
     $this->_processorName    = ts('Stripe');
   }
 
   /**
-   * Singleton function used to manage this object.
+   * Singleton function used to manage this object
    *
-   * @param string  $mode the mode of operation: live or test
-   * @param object  $paymentProcessor the details of the payment processor being invoked
-   * @param object  $paymentForm      reference to the form object if available
-   * @param boolean $force            should we force a reload of this payment object
+   * @param string $mode the mode of operation: live or test
    *
    * @return object
    * @static
    *
    */
-  static function &singleton($mode = 'test', &$paymentProcessor, &$paymentForm = NULL, $force = FALSE) {
+  static function &singleton($mode, &$paymentProcessor) {
       $processorName = $paymentProcessor['name'];
-      if (self::$_singleton[$processorName] === NULL || $force) {
+      if (self::$_singleton[$processorName] === NULL ) {
           self::$_singleton[$processorName] = new self($mode, $paymentProcessor);
       }
       return self::$_singleton[$processorName];
   }
 
   /**
-   * This function checks to see if we have the right config values.
+   * This function checks to see if we have the right config values
    *
-   * @return string
-   *   The error message if any.
-   *
+   * @return string the error message if any
    * @public
    */
   function checkConfig() {
@@ -84,30 +78,15 @@ class CRM_Core_Payment_Stripe extends CRM_Core_Payment {
   }
 
   /**
-   * Helper log function.
-   *
-   * @param string $op
-   *   The Stripe operation being performed.
-   * @param Exception $exception
-   *   The error!
-   */
-  function logStripeException($op, $exception) {
-    $body = print_r($exception->getJsonBody(), TRUE);
-    CRM_Core_Error::debug_log_message("Stripe_Error {$op}:  <pre> {$body} </pre>");
-  }
-
-  /**
    * Run Stripe calls through this to catch exceptions gracefully.
-   *
-   * @param string $op
+   * @param  string $op
    *   Determine which operation to perform.
-   * @param array $params
+   * @param  array $params
    *   Parameters to run Stripe calls on.
-   *
    * @return varies
    *   Response from gateway.
    */
-  function stripeCatchErrors($op = 'create_customer', $params, $qfKey = '', $ignores = array()) {
+  function stripeCatchErrors($op = 'create_customer', &$params, $qfKey = '') {
     // @TODO:  Handle all calls through this using $op switching for sanity.
     // Check for errors before trying to submit.
     $return = FALSE;
@@ -129,21 +108,12 @@ class CRM_Core_Payment_Stripe extends CRM_Core_Payment {
           $return = Stripe_Plan::create($params);
         break;
 
-        case 'retrieve_customer':
-          $return = Stripe_Customer::retrieve($params);
-        break;
-
-        case 'retrieve_balance_transaction':
-          $return = Stripe_BalanceTransaction::retrieve($params);
-        break;
-
         default:
          $return = Stripe_Customer::create($params);
         break;
       }
     }
     catch(Stripe_CardError $e) {
-      $this->logStripeException($op, $e);
       $error_message = '';
       // Since it's a decline, Stripe_CardError will be caught
       $body = $e->getJsonBody();
@@ -151,37 +121,39 @@ class CRM_Core_Payment_Stripe extends CRM_Core_Payment {
 
       //$error_message .= 'Status is: ' . $e->getHttpStatus() . "<br />";
       ////$error_message .= 'Param is: ' . $err['param'] . "<br />";
-      $error_message .= 'Type: ' . $err['type'] . '<br />';
-      $error_message .= 'Code: ' . $err['code'] . '<br />';
-      $error_message .= 'Message: ' . $err['message'] . '<br />';
+      $error_message .= 'Type: ' . $err['type'] . "<br />";
+      $error_message .= 'Code: ' . $err['code'] . "<br />";
+      $error_message .= 'Message: ' . $err['message'] . "<br />";
 
       // Check Event vs Contribution for redirect.  There must be a better way.
       if(empty($params['selectMembership'])
         && empty($params['contributionPageID'])) {
         $error_url = CRM_Utils_System::url('civicrm/event/register',
-          "_qf_Main_display=1&cancel=1&qfKey={$qfKey}", FALSE, NULL, FALSE);
+          "_qf_Main_display=1&cancel=1&qfKey=$qfKey", FALSE, NULL, FALSE);
       }
       else {
         $error_url = CRM_Utils_System::url('civicrm/contribute/transact',
-          "_qf_Main_display=1&cancel=1&qfKey={$qfKey}", FALSE, NULL, FALSE);
+          "_qf_Main_display=1&cancel=1&qfKey=$qfKey", FALSE, NULL, FALSE);
       }
 
       CRM_Core_Error::statusBounce("Oops!  Looks like there was an error.  Payment Response:
         <br /> $error_message", $error_url);
     }
+    catch (Stripe_InvalidRequestError $e) {
+      // Invalid parameters were supplied to Stripe's API
+    }
+    catch (Stripe_AuthenticationError $e) {
+      // Authentication with Stripe's API failed
+      // (maybe you changed API keys recently)
+    }
+    catch (Stripe_ApiConnectionError $e) {
+      // Network communication with Stripe failed
+    }
+    catch (Stripe_Error $e) {
+      // Display a very generic error to the user, and maybe send
+      // yourself an email
+    }
     catch (Exception $e) {
-      if (is_a($e, Stripe_Error)) {
-	foreach ($ignores as $ignore) {
-	  if (is_a($e, $ignore['class'])) {
-            $body = $e->getJsonBody();
-            $error = $body['error'];
-            if ($error['type'] == $ignore['type'] && $error['message'] == $ignore['message']) {
-	      return $return;
-	    }
-	  }
-	}
-        $this->logStripeException($op, $e);
-      }
       // Something else happened, completely unrelated to Stripe
       $error_message = '';
       // Since it's a decline, Stripe_CardError will be caught
@@ -197,11 +169,11 @@ class CRM_Core_Payment_Stripe extends CRM_Core_Payment {
       if(empty($params['selectMembership'])
         && empty($params['contributionPageID'])) {
         $error_url = CRM_Utils_System::url('civicrm/event/register',
-          "_qf_Main_display=1&cancel=1&qfKey={$qfKey}", FALSE, NULL, FALSE);
+          "_qf_Main_display=1&cancel=1&qfKey=$qfKey", FALSE, NULL, FALSE);
       }
       else {
         $error_url = CRM_Utils_System::url('civicrm/contribute/transact',
-          "_qf_Main_display=1&cancel=1&qfKey={$qfKey}", FALSE, NULL, FALSE);
+          "_qf_Main_display=1&cancel=1&qfKey=$qfKey", FALSE, NULL, FALSE);
       }
 
       CRM_Core_Error::statusBounce("Oops!  Looks like there was an error.  Payment Response:
@@ -215,12 +187,9 @@ class CRM_Core_Payment_Stripe extends CRM_Core_Payment {
    * Submit a payment using Stripe's PHP API:
    * https://stripe.com/docs/api?lang=php
    *
-   * @param array $params
-   *   Assoc array of input parameters for this transaction.
+   * @param  array $params assoc array of input parameters for this transaction
    *
-   * @return array
-   *   The result in a nice formatted array (or an error object).
-   *
+   * @return array the result in a nice formatted array (or an error object)
    * @public
    */
   function doDirectPayment(&$params) {
@@ -230,7 +199,7 @@ class CRM_Core_Payment_Stripe extends CRM_Core_Payment {
     }
 
     // Include Stripe library & Set API credentials.
-    require_once('stripe-php/lib/Stripe.php');
+    require_once("stripe-php/lib/Stripe.php");
     Stripe::setApiKey($this->_paymentProcessor['user_name']);
 
     // Stripe amount required in cents.
@@ -269,6 +238,10 @@ class CRM_Core_Payment_Stripe extends CRM_Core_Payment {
     if (isset($params['stripe_token'])) {
       $card_details = $params['stripe_token'];
     }
+    // For Webform
+    elseif(isset($params['billing_middle_name']) && strpos($params['billing_middle_name'], 'tok_') === 0) {
+      $card_details = $params['billing_middle_name'];
+    }
     else {
       CRM_Core_Error::fatal(ts('Stripe.js token was not passed!
         Have you turned on the CiviCRM-Stripe CMS module?'));
@@ -297,7 +270,7 @@ class CRM_Core_Payment_Stripe extends CRM_Core_Payment {
     /*
      $zz = print_r(get_defined_vars(), TRUE);
      $debug_code = '<pre>' . $zz . '</pre>';
-     watchdog('Stripe', $debug_code);
+     watchdog('Stripe', $debug_code, array(), WATCHDOG_NOTICE);
     */
 
     // Create a new Customer in Stripe.
@@ -327,7 +300,7 @@ class CRM_Core_Payment_Stripe extends CRM_Core_Payment {
       }
     }
     else {
-      $stripe_customer = CRM_Core_Payment_Stripe::stripeCatchErrors('retrieve_customer', $customer_query, $params['qfKey']);
+      $stripe_customer = Stripe_Customer::retrieve($customer_query);
       if (!empty($stripe_customer)) {
         // Avoid the 'use same token twice' issue while still using latest card.
         if(!empty($params['selectMembership'])
@@ -378,16 +351,10 @@ class CRM_Core_Payment_Stripe extends CRM_Core_Payment {
     }
 
     // Prepare the charge array, minus Customer/Card details.
-    if (empty($params['description'])) {
-      $params['description'] = ts('CiviCRM backend contribution');
-    }
-    else {
-      $params['description'] = ts('# CiviCRM Donation Page # ') . $params['description'];
-    }
     $stripe_charge = array(
       'amount' => $amount,
       'currency' => strtolower($params['currencyID']),
-      'description' => $params['description'] .
+      'description' => '# CiviCRM Donation Page # ' . $params['description'] .
         ' # Invoice ID # ' . $params['invoiceID'],
     );
 
@@ -410,25 +377,21 @@ class CRM_Core_Payment_Stripe extends CRM_Core_Payment {
     if (!empty($stripe_response)) {
       // Success!  Return some values for CiviCRM.
       $params['trxn_id'] = $stripe_response->id;
-      // Return fees & net amount for Civi reporting.
-      // Uses new Balance Trasaction object.
-      $balance_transaction = CRM_Core_Payment_Stripe::stripeCatchErrors('retrieve_balance_transaction', $stripe_response->balance_transaction, $params['qfKey']);
-      if (!empty($balance_transaction)) {
-        $params['fee_amount'] = $balance_transaction->fee / 100;
-        $params['net_amount'] = $balance_transaction->net / 100;
-      }
+      // Return fees & net amount for Civi reporting.  Thanks Kevin!
+      $params['fee_amount'] = $stripe_response->fee / 100;
+      $params['net_amount'] = $params['amount'] - $params['fee_amount'];
     }
     else {
       // There was no response from Stripe on the create charge command.
       if(empty($params['selectMembership']) && empty($params['contributionPageID'])) {
         $error_url = CRM_Utils_System::url('civicrm/event/register',
-          '_qf_Main_display=1&cancel=1&qfKey=' . $params['qfKey'], FALSE, NULL, FALSE);
+          "_qf_Main_display=1&cancel=1&qfKey=" . $params['qfKey'], FALSE, NULL, FALSE);
       }
       else {
         $error_url = CRM_Utils_System::url('civicrm/contribute/transact',
-          '_qf_Main_display=1&cancel=1&qfKey=' . $params['qfKey'], FALSE, NULL, FALSE);
+          "_qf_Main_display=1&cancel=1&qfKey=" . $params['qfKey'], FALSE, NULL, FALSE);
       }
-      CRM_Core_Error::statusBounce('Stripe transaction response not recieved!  Check the Logs section of your stripe.com account.', $error_url);
+      CRM_Core_Error::statusBounce("Stripe transaction response not recieved!  Check the Logs section of your stripe.com account.", $error_url);
     }
 
     return $params;
@@ -438,16 +401,11 @@ class CRM_Core_Payment_Stripe extends CRM_Core_Payment {
    * Submit a recurring payment using Stripe's PHP API:
    * https://stripe.com/docs/api?lang=php
    *
-   * @param array $params
-   *   Assoc array of input parameters for this transaction.
-   * @param int $amount
-   *   Transaction amount in USD cents.
-   * @param object $stripe_customer
-   *   Stripe customer object generated by Stripe API.
+   * @param  array $params assoc array of input parameters for this transaction
+   * @param  int $amount transaction amount in USD cents
+   * @param  object $stripe_customer Stripe customer object generated by Stripe API
    *
-   * @return array
-   *   The result in a nice formatted array (or an error object).
-   *
+   * @return array the result in a nice formatted array (or an error object)
    * @public
    */
   function doRecurPayment(&$params, $amount, $stripe_customer) {
@@ -460,8 +418,7 @@ class CRM_Core_Payment_Stripe extends CRM_Core_Payment {
     }
     $frequency = $params['frequency_unit'];
     $installments = $params['installments'];
-    $frequency_interval = (empty($params['frequency_interval']) ? 1 : $params['frequency_interval']);
-    $plan_id = "every-{$frequency_interval}-{$frequency}-{$amount}";
+    $plan_id = "$frequency-$amount";
 
     // Prepare escaped query params.
     $query_params = array(
@@ -473,25 +430,17 @@ class CRM_Core_Payment_Stripe extends CRM_Core_Payment {
       WHERE plan_id = %1", $query_params);
 
     if (!isset($stripe_plan_query)) {
-      $formatted_amount =  '$' . number_format(($amount / 100), 2);
+      $formatted_amount =  "$" . number_format(($amount / 100), 2);
       // Create a new Plan.
       $stripe_plan = array(
-        'amount' => $amount,
-        'interval' => $frequency,
-        'name' => "CiviCRM every {$frequency_interval} {$frequency}s {$formatted_amount}",
-        'currency' => strtolower($params['currencyID']),
-        'id' => $plan_id,
-        'interval_count' => $frequency_interval,
-      );
+        "amount" => $amount,
+        "interval" => $frequency,
+        "name" => "CiviCRM $frequency" . 'ly ' . $formatted_amount,
+        "currency" => "usd",
+        "id" => $plan_id);
 
-      $ignores = array(
-	array(
-	  'class' => Stripe_InvalidRequestError,
-	  'type' => 'invalid_request_error',
-	  'message' => 'Plan already exists.',
-	),
-      );
-      CRM_Core_Payment_Stripe::stripeCatchErrors('create_plan', $stripe_plan, $params['qfKey'], $ignores);
+      CRM_Core_Payment_Stripe::stripeCatchErrors('create_plan', $stripe_plan, $params['qfKey']);
+
       // Prepare escaped query params.
       $query_params = array(
         1 => array($plan_id, 'String'),
@@ -509,16 +458,14 @@ class CRM_Core_Payment_Stripe extends CRM_Core_Payment {
     // card to be charged immediately.  So, since Stripe only supports one
     // subscription per customer, we have to cancel the existing active
     // subscription first.
-    if (!empty($stripe_customer->subscription) && $stripe_customer->subscription->status == 'active') {
+    if (!empty($stripe_customer->subscription) && $stripe_customer->subscription-> status == 'active') {
       $stripe_customer->cancelSubscription();
     }
 
     // Attach the Subscription to the Stripe Customer.
-    $cust_sub_params = array(
-      'prorate' => FALSE,
-      'plan' => $plan_id,
-    );
-    $stripe_response = $stripe_customer->updateSubscription($cust_sub_params);
+    $stripe_response = $stripe_customer->updateSubscription(array(
+      'prorate' => FALSE, 'plan' => $plan_id));
+
     // Prepare escaped query params.
     $query_params = array(
       1 => array($stripe_customer->id, 'String'),
@@ -530,7 +477,7 @@ class CRM_Core_Payment_Stripe extends CRM_Core_Payment {
 
     if (!empty($existing_subscription_query)) {
       // Cancel existing Recurring Contribution in CiviCRM.
-      $cancel_date = date('Y-m-d H:i:s');
+      $cancel_date = date("Y-m-d H:i:s");
 
       // Prepare escaped query params.
       $query_params = array(
@@ -547,7 +494,7 @@ class CRM_Core_Payment_Stripe extends CRM_Core_Payment {
     }
 
     // Calculate timestamp for the last installment.
-    $end_time = strtotime("+{$installments} {$frequency}");
+    $end_time = strtotime("+$installments $frequency");
     $invoice_id = $params['invoiceID'];
 
     // Prepare escaped query params.
@@ -578,13 +525,11 @@ class CRM_Core_Payment_Stripe extends CRM_Core_Payment {
   }
 
   /**
-   * Transfer method not in use.
+   * Transfer method not in use
    *
-   * @param array $params
-   *   Name value pair of contribution data.
+   * @param array $params  name value pair of contribution data
    *
    * @return void
-   *
    * @access public
    *
    */

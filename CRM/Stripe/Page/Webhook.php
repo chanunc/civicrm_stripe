@@ -17,8 +17,7 @@ class CRM_Stripe_Page_Webhook extends CRM_Core_Page {
 
     $test_mode = ! $data->livemode;
 
-    $stripe_key = CRM_Core_DAO::singleValueQuery("SELECT pp.user_name FROM civicrm_payment_processor pp INNER JOIN civicrm_payment_processor_type ppt on pp.payment_processor_type_id = ppt.id AND ppt.name  = 'Stripe' WHERE is_test = '$test_mode'");
-
+    $stripe_key = CRM_Core_DAO::singleValueQuery("SELECT user_name FROM civicrm_payment_processor WHERE payment_processor_type = 'Stripe' AND is_test = '$test_mode'");
     require_once ("packages/stripe-php/lib/Stripe.php");
     Stripe::setApiKey($stripe_key);
 
@@ -86,7 +85,7 @@ class CRM_Stripe_Page_Webhook extends CRM_Core_Page {
         $stripe_customer = Stripe_Customer::retrieve($customer_id);
         $recieve_date = date("Y-m-d H:i:s", $charge->created);
         $total_amount = $charge->amount / 100;
-        $fee_amount = isset($charge->fee) ? ($charge->fee / 100) : 0;
+        $fee_amount = $charge->fee / 100;
         $net_amount = $total_amount - $fee_amount;
         $transaction_id = $charge->id;
         $new_invoice_id = $stripe_event_data->data->object->id;
@@ -216,7 +215,7 @@ class CRM_Stripe_Page_Webhook extends CRM_Core_Page {
         // Build some params.
         $recieve_date = date("Y-m-d H:i:s", $charge->created);
         $total_amount = $charge->amount / 100;
-        $fee_amount = isset($charge->fee) ? ($charge->fee / 100) : 0;
+        $fee_amount = $charge->fee / 100;
         $net_amount = $total_amount - $fee_amount;
         $transaction_id = $charge->id;
         if (empty($recur_contrib_query->campaign_id)) {
