@@ -239,8 +239,12 @@ class CRM_Core_Payment_Stripe extends CRM_Core_Payment {
       $card_details = $params['stripe_token'];
     }
     // For Webform
+    // Collect token from billing_middle_name field
     elseif(isset($params['billing_middle_name']) && strpos($params['billing_middle_name'], 'tok_') === 0) {
       $card_details = $params['billing_middle_name'];
+
+      // Remove billing_middle_name field
+      $params['billing_middle_name'] = '';
     }
     else {
       CRM_Core_Error::fatal(ts('Stripe.js token was not passed!
